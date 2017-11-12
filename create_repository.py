@@ -8,7 +8,7 @@ import os
 import hashlib
 import urllib
 import collections
-
+import io
 
 plugins_dir = 'plugins'
 build_dir = 'build'
@@ -23,6 +23,22 @@ repo_info = config['repository']
 repo_name_with_version = '%s-%s' % (repo_info['id'], repo_info['version'])
 build_repo_final_dir = os.path.join(build_repo_dir, repo_name_with_version)
 
+def generate_checksum(archive_path):
+    checksum_path = '{}.md5'.format(archive_path) 
+    checksum_dirname = os.path.dirname(checksum_path)
+    archive_relpath = os.path.relpath(archive_path, checksum_dirname)
+
+    checksum = hashlib.md5()
+    with open(archive_path, 'rb') as archive_contents:
+        for chunk in iter(lambda: archive_contents.read(2 ** 12), b''):
+            checksum.update(chunk)
+    digest = checksum.hexdigest()
+
+    binary_marker = '*'
+    # Force a UNIX line ending, like the md5sum utility.
+    with io.open(checksum_path, 'w', newline='\n') as sig:
+        sig.write(u'{} {}{}\n'.format(digest, binary_marker, archive_relpath))
+    return checksum_path
 
 def init():
     if not os.path.isdir(plugins_dir):
@@ -46,7 +62,7 @@ def build_plugins():
     existing_addons = {}
 
     if os.path.isfile(addons_xml_file):
-        addons_xml_root =  etree.parse(addons_xml_file).getroot()
+        addons_xml_root = etree.parse(addons_xml_file).getroot()
 
         existing_addons = {a.attrib['id']: a.attrib['version'] for a in addons_xml_root.findall('addon')}
     else:
@@ -97,15 +113,16 @@ def build_plugins():
 
             shutil.copytree(repo_dir, build_repo_path, ignore=shutil.ignore_patterns('.git*'))
 
-            shutil.make_archive(build_repo_path, 'zip', build_plugins_dir, name_with_version)
-
-            shutil.move('%s.zip' % build_repo_path, build_repo_path)
+            zip_file = shutil.make_archive(build_repo_path, 'zip', build_plugins_dir, name_with_version)
+            md5_file = generate_checksum(zip_file)
+            shutil.move(zip_file, build_repo_path)
+            shutil.move(md5_file, build_repo_path)
 
             plugin_addon_xml = etree.parse(open(os.path.join(build_repo_path, 'addon.xml')))
             addons_xml_root.append(plugin_addon_xml.getroot())
 
             for f in os.listdir(build_repo_path):
-                if f.startswith('changelog.') or f.startswith('fanart.') or f.startswith('icon.') or f.endswith('.zip'):
+                if f.startswith('changelog.') or f.startswith('fanart.') or f.startswith('icon.') or f.endswith('.zip') or f.endswith('.md5'):
                     pass
                 else:
                     _f = os.path.join(build_repo_path, f)
